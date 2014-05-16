@@ -82,8 +82,20 @@ Pack.setup()
 packs = []
 
 # TBD: probe the GPIO pins to detect the presence of pack modules
-pack1 = Pack(0, "AIN0", 800, 21.0)
+pack1 = Pack(0, "AIN0", 800, 15.0, 120.0)
+pack2 = Pack(1, "AIN1", 800, 15.0, 120.0)
+pack3 = Pack(2, "AIN2", 800, 15.0, 120.0)
+pack4 = Pack(3, "AIN3", 3000, 21.0, 240.0)
+pack5 = Pack(4, "AIN4", 3000, 21.0, 240.0)
+pack6 = Pack(5, "AIN5", 3000, 21.0, 240.0)
+pack7 = Pack(6, "AIN6", 3000, 7.5, 240.0)
 packs.append(pack1)
+packs.append(pack2)
+packs.append(pack3)
+packs.append(pack4)
+packs.append(pack5)
+packs.append(pack6)
+packs.append(pack7)
 
 # size the thread pool to the numer of packs
 reactor.suggestThreadPoolSize(len(packs))

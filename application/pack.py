@@ -19,10 +19,11 @@ class Pack:
 		log.msg("Initializing ADC")
 		ADC.setup()
 
-	def __init__(self, index, adc_pin, turns, resistor):
+	def __init__(self, index, adc_pin, turns, resistor, voltage):
 		# store the provided data
 		self.index = index;
 		self.adc_pin = adc_pin
+		self.voltage = voltage
 		
 		# TBD: query pack parameters from the pack's EEPROM via I2C
 		# for now hard code
@@ -35,10 +36,13 @@ class Pack:
 		self.conversion_factor = (turns * 0.9) / resistor
 
 	def get_index(self):
-		return self.index;
+		return self.index
 
 	def get_num_circuits(self):
-		return self.num_circuits;
+		return self.num_circuits
+
+	def get_voltage(self):
+		return self.voltage
 
 	def collect_samples(self, circuit):
 		# TBD: switch MUX to selected circuit via I2C
@@ -50,7 +54,7 @@ class Pack:
 			# read the sample
 			sample = ADC.read(self.adc_pin)
 			# normalize the sample
-			normalized_sample = sample - 0.5
+			normalized_sample = 2 * (sample - 0.5)
 			# convert to an amperage
 			amperage = normalized_sample * self.conversion_factor
 			# add it to the list
