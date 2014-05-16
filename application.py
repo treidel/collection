@@ -82,14 +82,8 @@ Pack.setup()
 packs = []
 
 # TBD: probe the GPIO pins to detect the presence of pack modules
-pack1 = Pack(0, "AIN0")
+pack1 = Pack(0, "AIN0", 800, 21.0)
 packs.append(pack1)
-pack2 = Pack(1, "AIN1")
-packs.append(pack2)
-pack3 = Pack(2, "AIN2")
-packs.append(pack3)
-pack4 = Pack(3, "AIN3")
-packs.append(pack4)
 
 # size the thread pool to the numer of packs
 reactor.suggestThreadPoolSize(len(packs))
@@ -138,6 +132,7 @@ def packCollectionHandler(pack):
 		samples = pack.collect_samples(circuit)
 		# calculate the RMS value for the signal
 		rms = Power.rms(samples)
+		# store the result
 		result[circuit] = rms
 	log.msg("packCollectionHandler exit result=" + str(result), logLevel=logging.DEBUG)
 	return result
