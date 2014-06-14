@@ -4,6 +4,7 @@ from twisted.internet import reactor
 from twisted.internet import task
 from twisted.internet import defer
 from twisted.internet import threads
+from twisted.python.threadpool import ThreadPool
 from twisted.internet.defer import inlineCallbacks
 from twisted.web.client import Agent
 from twisted.enterprise import adbapi
@@ -25,6 +26,7 @@ import argparse;
 # parse arguments
 parser = argparse.ArgumentParser(description="Main Application")
 parser.add_argument('--url', help="URL of API endpoint", required=True)
+parser.add_argument('--database', help="sqlite database for the application", required=True)
 args = parser.parse_args()
 
 # configure syslog logging
@@ -35,10 +37,9 @@ log.msg("Starting")
 # create the database connection pool 
 # sqlite requires that foreign key support be turned on with every connection
 # to ensure that we have this turned on we use only one connection 
-Registry.DBPOOL = adbapi.ConnectionPool('sqlite3', database="/var/local/samples.db", check_same_thread=False, cp_max=1)
+Registry.DBPOOL = adbapi.ConnectionPool('sqlite3', database=args.database, check_same_thread=False, cp_max=1)
 # register our classes with the registry
 Registry.register(Record, Measurement)
-
 
 # turn on forein key handling
 def enableForeignKeysHandler(ignore):
@@ -66,10 +67,13 @@ pack1 = Pack(0, "AIN0")
 packs.append(pack1)
 pack2 = Pack(1, "AIN1")
 packs.append(pack2)
+pack3 = Pack(2, "AIN2")
+packs.append(pack3)
+pack4 = Pack(3, "AIN3")
+packs.append(pack4)
 
-
-# TBD: resize the thread pool to have enough threads for all collection to happen 
-# concurrently
+# size the thread pool to the numer of packs
+reactor.suggestThreadPoolSize(len(packs))
 
 # setup the collection timer handler
 @inlineCallbacks
