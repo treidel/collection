@@ -4,6 +4,7 @@ from twisted.internet import reactor
 from twisted.internet import task
 from twisted.internet import defer
 from twisted.internet import threads
+from twisted.internet import ssl
 from twisted.python.threadpool import ThreadPool
 from twisted.internet.defer import inlineCallbacks
 from twisted.web.client import Agent
@@ -18,6 +19,7 @@ from application.power import Power
 from application.record import Record
 from application.record import Measurement
 from application.web import StringProducer
+from application.ssl import WebClientSSLContextFactory
 import uuid;
 from datetime import datetime;
 import json;
@@ -27,8 +29,24 @@ import argparse;
 parser = argparse.ArgumentParser(description="Main Application")
 parser.add_argument('--url', help="URL of API endpoint", required=True)
 parser.add_argument('--database', help="sqlite database for the application", required=True)
+parser.add_argument('--ca-cert', help="root CA certificate", required=True)
+parser.add_argument('--device-cert', help="device certificate", required=True)
+parser.add_argument('--device-key', help="device private key file", required=True)
 args = parser.parse_args()
 
+# load the certificates and key
+with open(args.ca_cert) as certAuthCertFile:
+	certAuthCert = ssl.Certificate.loadPEM(certAuthCertFile.read())
+with open(args.device_key) as keyFile:
+	with open(args.device_cert) as certFile:
+		deviceCert = ssl.PrivateCertificate.loadPEM(keyFile.read() + certFile.read())
+
+# create the SSL context factory
+sslContextFactory = deviceCert.options(certAuthCert)
+
+# wrap the SSL context factory in a WebClientSSLContextFactory
+webClientContextFactory = WebClientSSLContextFactory(sslContextFactory)
+	
 # configure syslog logging
 syslog.startLogging(prefix='application')
 
@@ -158,9 +176,11 @@ def uploadTimerHandler():
 		# serialize to JSON
 		serialized = json.dumps(entries)
 
-		# make the REST API call
-		agent = Agent(reactor, connectTimeout=2)
+		# create the HTTP client for the REST API call
+		agent = Agent(reactor, webClientContextFactory, connectTimeout=2)
+		# wrap the payload
 		body = StringProducer(serialized)
+		# execute the request and set the callback handler
 		request = agent.request('POST', args.url, None, body)
 		request.addCallback(restResponseHandler, records)
 		request.addErrback(restErrorHandler)
