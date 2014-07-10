@@ -8,6 +8,7 @@ from twisted.internet import ssl
 from twisted.python.threadpool import ThreadPool
 from twisted.internet.defer import inlineCallbacks
 from twisted.web.client import Agent
+from twisted.web.http_headers import Headers
 from twisted.enterprise import adbapi
 from twisted.python import log
 from twisted.python import syslog
@@ -169,7 +170,7 @@ def uploadTimerHandler():
 				circuits.append(circuit)
 
 			# create the top-level record entry
-			entry = {'timestamp' : record.timestamp, 'uuid' : record.uuid, 'circuits' : circuits}		
+			entry = {'timestamp' : record.timestamp, 'uuid' : record.uuid, 'measurements' : circuits}		
 			# add the entry to the list
 			entries.append(entry)
 
@@ -181,7 +182,7 @@ def uploadTimerHandler():
 		# wrap the payload
 		body = StringProducer(serialized)
 		# execute the request and set the callback handler
-		request = agent.request('POST', args.url, None, body)
+		request = agent.request('POST', args.url, Headers({'Content-Type' : ['application/json']}), body)
 		request.addCallback(restResponseHandler, records)
 		request.addErrback(restErrorHandler)
 
