@@ -113,7 +113,9 @@ def collectionTimerHandler():
 	@inlineCallbacks
 	def interaction(txn):
 		# create a record
-		record = yield Record(uuid=str(uuid.uuid1()), timestamp=datetime.utcnow()).save();
+		timestamp=datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+		record = Record(uuid=str(uuid.uuid1()), timestamp=timestamp)
+		yield record.save()
 		# go through the results
 		for result in results:
 			# get the pack
@@ -193,7 +195,7 @@ def uploadTimerHandler():
 def restResponseHandler(response, records):
 	log.msg("restResponseHandler enter response=" + str(response) + " records=" + str(records), logLevel=logging.DEBUG)
 	# check for success
-	if 200 == response.code:
+	if 201 == response.code:
 		log.msg("successfully uploaded " + str(len(records)) + " to " + args.url)
 		# the request was successful so remove the records we sent from the database
 		for record in records:
