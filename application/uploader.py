@@ -1,22 +1,23 @@
 import json
-import logging
 
 from twisted.internet import reactor
 from twisted.internet import defer
 from twisted.internet import task
 from twisted.internet import ssl
-from twisted.python import log
 from twisted.internet.defer import inlineCallbacks
 from twisted.web.client import Agent
 from twisted.web.http_headers import Headers
 
+from application.log import Log
 from application.web import StringProducer
 from application.ssl import WebClientSSLContextFactory
 from application.record import Record
 
 class Uploader:
 
-	def __init__(self, ca_cert, device_key, device_cert):
+	def __init__(self, url, ca_cert, device_key, device_cert):
+                # store the url 
+                self.url = url
 		# load the certificates and key
 		with open(ca_cert) as certAuthCertFile:
 			certAuthCert = ssl.Certificate.loadPEM(certAuthCertFile.read())
@@ -30,7 +31,7 @@ class Uploader:
 		self.webClientContextFactory = WebClientSSLContextFactory(sslContextFactory)
 
 	def start(self): 
-		log.msg("starting upload")
+		Log.info("starting upload")
 		# schedule the collection timer
 		uploadTimer = task.LoopingCall(self.upload_timer_handler)
 		uploadTimer.start(60.0, now=True)		
@@ -39,15 +40,15 @@ class Uploader:
 
 	@inlineCallbacks
 	def upload_timer_handler(self):
-		log.msg("upload_timer_handler enter", logLevel=logging.DEBUG)
+		Log.debug("upload_timer_handler enter")
 		# get all pending database entries
 		records = yield Record.find()
 		# check for cases where no records are found
 		if 0 == len(records):
-			log.msg("no records found, not sending HTTP request")
+			Log.info("no records found, not sending HTTP request")
 		else:	
 			# go through all records to create the REST payload
-			log.msg("sending " + str(len(records)) + " records to server")
+			Log.info("sending " + str(len(records)) + " records to server")
 
 			# setup the list of entries
 			entries = []
@@ -70,42 +71,42 @@ class Uploader:
 				# add the entry to the list
 				entries.append(entry)
 
-				# serialize to JSON
-				serialized = json.dumps(entries)
+			# serialize to JSON
+			serialized = json.dumps(entries)
 
-				# create the HTTP client for the REST API call
-				agent = Agent(reactor, webClientContextFactory, connectTimeout=2)
-				# wrap the payload
-				body = StringProducer(serialized)
-				# setup the URL
-				recordsURL = args.url + "/records"
-				log.msg("sending records to " + recordsURL)
-				# execute the request and set the callback handler
-				request = agent.request('POST', recordsURL, Headers({'Content-Type' : ['application/json']}), body)
-				request.addCallback(self.rest_response_handler, records)
-				request.addErrback(self.rest_error_handler)
+			# create the HTTP client for the REST API call
+			agent = Agent(reactor, self.webClientContextFactory, connectTimeout=2)
+			# wrap the payload
+			body = StringProducer(serialized)
+			# setup the URL
+			recordsURL = self.url + "/records"
+			Log.info("sending records to " + recordsURL)
+			# execute the request and set the callback handler
+			request = agent.request('POST', recordsURL, Headers({'Content-Type' : ['application/json']}), body)
+			request.addCallback(self.rest_response_handler, records)
+			request.addErrback(self.rest_error_handler)
 
-		log.msg("upload_timer_handler exit", logLevel=logging.DEBUG)
+		Log.debug("upload_timer_handler exit")
 
 	# setup the HTTP response handler
 	@inlineCallbacks
 	def rest_response_handler(self, response, records):
-		log.msg("rest_response_handler enter response=" + str(response) + " records=" + str(records), logLevel=logging.DEBUG)
+		Log.debug("rest_response_handler enter response=" + str(response) + " records=" + str(records))
 		# check for success
 		if 201 == response.code:
-			log.msg("successfully uploaded " + str(len(records)) + " to " + args.url)
+			Log.info("successfully uploaded " + str(len(records)) + " to " + self.url)
 			# the request was successful so remove the records we sent from the database
 			for record in records:
 				yield record.delete()
 		else:
-			log.msg("received HTTP " + str(response.code) + " from " + args.url + ", leaving records in place")
-		log.msg("rest_response_handler exit", logLevel=logging.DEBUG)	
+			Log.info("received HTTP " + str(response.code) + " from " + args.url + ", leaving records in place")
+		Log.debug("rest_response_handler exit")
 
-	def rest_error_handler(error):
-		log.msg("rest_error_handler enter error=" + str(error), logLevel=logging.DEBUG)
+	def rest_error_handler(self, error):
+		Log.debug("rest_error_handler enter error=" + str(error))
 
-		log.msg("unable to contact server with URL=" + args.url)
+		Log.info("unable to contact server with URL=" + self.url)
 
-		log.msg("rest_error_handler exit", logLevel=logging.DEBUG)
+		Log.debug("rest_error_handler exit")
 
 

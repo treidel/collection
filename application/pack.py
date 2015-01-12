@@ -1,6 +1,8 @@
 import Adafruit_BBIO.ADC as ADC
+
 from time import sleep
-from twisted.python import log
+
+from application.log import Log
 
 class Pack:
 
@@ -16,7 +18,7 @@ class Pack:
 	@classmethod 
 	def setup(cls):
 		# initialize the ADC
-		log.msg("Initializing ADC")
+		Log.info("Initializing ADC")
 		ADC.setup()
 
 	def __init__(self, index, adc_pin, turns, resistor, voltage):

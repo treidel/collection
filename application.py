@@ -1,12 +1,10 @@
 #!/usr/bin/python
 
 import argparse
-import logging
 
 from twisted.internet import reactor
-from twisted.python import log
-from twisted.python import syslog
 
+from application.log import Log
 from application.collector import Collector
 from application.uploader import Uploader
 from application.database import Database
@@ -19,10 +17,13 @@ parser.add_argument('--database', help="sqlite database for the application", re
 parser.add_argument('--ca-cert', help="root CA certificate", required=True)
 parser.add_argument('--device-cert', help="device certificate", required=True)
 parser.add_argument('--device-key', help="device private key file", required=True)
+parser.add_argument('--debug', help="enable debug logging", action="store_true")
 args = parser.parse_args()
 
-# configure syslog logging
-syslog.startLogging(prefix='application')
+# configure logging
+Log.setup()
+if args.debug:
+	Log.enable_debug()
 
 # initialize the pack module
 Pack.setup()
@@ -34,7 +35,7 @@ Database.setup(args.database)
 collector = Collector()
 
 # create the uploader
-uploader = Uploader(args.ca_cert, args.device_key, args.device_cert)
+uploader = Uploader(args.url, args.ca_cert, args.device_key, args.device_cert)
 
 # TBD: probe the GPIO pins to detect the presence of pack modules
 pack1 = Pack(0, "AIN0", 800, 15.0, 120.0)
@@ -52,7 +53,7 @@ collector.add_pack(pack6)
 pack7 = Pack(6, "AIN6", 3000, 7.5, 240.0)
 collector.add_pack(pack7)
 
-log.msg("Starting")
+Log.info("Starting")
 
 # wait until the database has started before starting the upload + collection
 d = Database.start()
@@ -61,7 +62,7 @@ def processing_start(result):
 	collector.start()
 d.addCallback(processing_start)
 
-log.msg("Running")
+Log.info("Running")
 
 # run the reactor
 reactor.run()
