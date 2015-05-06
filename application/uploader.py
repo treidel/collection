@@ -45,7 +45,7 @@ class CustomClientSession(ClientSession):
 		registration = {'model' : 'test', 'software-version' : '1.0', 'hardware-version' : '1.0'}
 		payload = dumps(registration)
 		self.send('/registration', payload, False)
-		# store ourselves in the uploader
+		# store ourselves in the uploader now that we're fully connected
 		self.factory.uploader.session = self
 		# start an upload in case there are stored records
 		self._as_future(self.factory.uploader._upload)
@@ -74,6 +74,8 @@ class Uploader:
 		self.factory = CustomStompWebSocketClientFactory(session_factory, url=url, debug=True)
 		# store a reference to ourselves in the factory
 		self.factory.uploader = self
+		# initialize the session to None to indicate we're not connected yet
+		self.session = None
 	
 	def start(self):
 		Log.info("starting uploading")
@@ -88,8 +90,6 @@ class Uploader:
 
 	def _connect(self):
 		Log.info("triggering connection")
-		# initialize the session to None to indicate we're not connected yet
-		self.session = None
 		# start the connection
 		connectWS(self.factory, self.sslContextFactory)
 
@@ -128,7 +128,7 @@ class Uploader:
 					circuits.append(circuit)
 
 				# create the top-level record entry
-				entry = {'timestamp' : record.timestamp, 'uuid' : record.uuid, 'measurements' : circuits}		
+				entry = {'timestamp' : record.timestamp, 'uuid' : record.uuid, 'duration-in-s' : record.duration, 'measurements' : circuits}		
 				# add the entry to the list
 				entries.append(entry)
 

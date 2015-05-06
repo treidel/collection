@@ -66,7 +66,7 @@ class Collector:
 				# store it in the record
 				measurements.append(measurement)
 		# create the record to be written to the database
-		record = Record(uuid=str(uuid.uuid1()), timestamp=datetime.utcnow().replace(microsecond=0).isoformat() + "Z")
+		record = Record(uuid=str(uuid.uuid1()), duration=10.0, timestamp=datetime.utcnow().replace(microsecond=0).isoformat() + "Z")
        
 		# write the record
 		yield Database.write_record(record, measurements)
