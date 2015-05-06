@@ -28,7 +28,7 @@ class Database:
 	def write_record(cls, record, measurements): 
 		Log.debug("writing record " + str(record) + " measurements " + str(measurements))
 		try: 
-			Database._write_record(record, measurements)
+			return Database._write_record(record, measurements)
 		except Exception as err:
 			Log.error(err)
 			pass

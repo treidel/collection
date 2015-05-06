@@ -69,7 +69,7 @@ class Collector:
 		record = Record(uuid=str(uuid.uuid1()), timestamp=datetime.utcnow().replace(microsecond=0).isoformat() + "Z")
        
 		# write the record
-		Database.write_record(record, measurements)
+		yield Database.write_record(record, measurements)
 		# poke the uploader to tell it records are ready
 		self.uploader.upload()
 		# done 

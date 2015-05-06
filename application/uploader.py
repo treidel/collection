@@ -84,7 +84,7 @@ class Uploader:
 
 	def upload(self):
 		# trigger an upload in a short while
-		task.deferLater(reactor, 1.0, self._upload)
+		task.deferLater(reactor, 0.0, self._upload)
 
 	def _connect(self):
 		Log.info("triggering connection")
