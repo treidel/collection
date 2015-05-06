@@ -31,11 +31,11 @@ Pack.setup()
 # initialize the database layer
 Database.setup(args.database)
 
-# create the collector
-collector = Collector()
-
 # create the uploader
 uploader = Uploader(args.url, args.ca_cert, args.device_key, args.device_cert)
+
+# create the collector
+collector = Collector(uploader)
 
 # TBD: probe the GPIO pins to detect the presence of pack modules
 pack1 = Pack(0, "AIN0", 800, 15.0, 120.0)

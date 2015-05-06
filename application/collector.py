@@ -17,7 +17,9 @@ from application.power import Power
 
 class Collector:
 
-	def __init__(self):
+	def __init__(self, uploader):
+		# store the uploader
+		self.uploader = uploader
 		# setup the list of packs
 		self.packs = []
 	
@@ -60,7 +62,7 @@ class Collector:
 				# create the measurement 
 				circuit_id = str(pack.get_index()) + "-" + str(circuit)
 				value = result[1][circuit]
-				measurement = Measurement(circuit=circuit_id, value=value)
+				measurement = Measurement(circuit=circuit_id, amperage=value, voltage=pack.get_voltage())
 				# store it in the record
 				measurements.append(measurement)
 		# create the record to be written to the database
@@ -68,6 +70,8 @@ class Collector:
        
 		# write the record
 		Database.write_record(record, measurements)
+		# poke the uploader to tell it records are ready
+		self.uploader.upload()
 		# done 
 		Log.debug("collection_timer_handler exit")
 

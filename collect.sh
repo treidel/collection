@@ -1,4 +1,4 @@
-ROOT_DIR=/home/ubuntu/collection
+ROOT_DIR=/home/ubuntu/src/collection
 CERT_DIR=/home/ubuntu
 COLLECT_URL=https://54.86.219.87:8443/device/records
 DATABASE=/var/local/samples.db
