@@ -49,17 +49,23 @@ class Uploader:
 	def _connect(self):
 		Log.info("connecting")
 		# initialize the client variable so we can clean up in error cases
+		client = None
 		try:
 			# start the connection
-			self.client = yield self.endpoint.connect(self.factory)
+			client = yield self.endpoint.connect(self.factory)
 			Log.info("connected")
 			# do the MQTT connect
-			yield self.client.connect(self.device, keepalive=0, version=v31)
+			yield client.connect(self.device, keepalive=0, version=v31)
 			Log.info("registered")
+			# store the client
+			self.client = client
 			# trigger an upload
 			self.upload()
 		except Exception, e:
 			Log.info('failed to connect, waiting to retry.  Reason={}'.format(e))
+			if client is not None:
+				Log.info("disconnecting")
+				client.transport.loseConnection()
 			self.client = None
 			task.deferLater(reactor, 10.0, self._connect)
 
@@ -109,9 +115,6 @@ class Uploader:
 					yield record.delete()
 				
 				Log.info("sent " + str(len(records)) + " records")	
-				# trigger another upload in case there are still records to collect
-				self.upload()
-
 			except Exception as e:
             			Log.error("error received when sending records: " + str(e))
 			

@@ -1,7 +1,7 @@
 CERT_DIR=/home/ubuntu
 MQTT_HOST=ALZV4L16OIHKX.iot.us-east-1.amazonaws.com
 MQTT_PORT=8883
-DATABASE=/var/local/db/samples.db
+DATABASE=/home/ubuntu/src/collection/samples.db
 PYTHONPATH=~/src/AutobahnPython/autobahn:debug
 export PYTHONPATH
 
