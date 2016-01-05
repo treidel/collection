@@ -12,7 +12,8 @@ from application.pack import Pack
 
 # parse arguments
 parser = argparse.ArgumentParser(description="Main Application")
-parser.add_argument('--url', help="URL of API endpoint", required=True)
+parser.add_argument('--host', help="MQTT host name", required=True)
+parser.add_argument('--port', help="MQTT port", type=int, required=True)
 parser.add_argument('--database', help="sqlite database for the application", required=True)
 parser.add_argument('--ca-cert', help="root CA certificate", required=True)
 parser.add_argument('--device-cert', help="device certificate", required=True)
@@ -32,7 +33,7 @@ Pack.setup()
 Database.setup(args.database)
 
 # create the uploader
-uploader = Uploader(args.url, args.ca_cert, args.device_key, args.device_cert)
+uploader = Uploader(args.host, args.port, args.ca_cert, args.device_key, args.device_cert)
 
 # create the collector
 collector = Collector(uploader)
