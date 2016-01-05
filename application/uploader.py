@@ -14,7 +14,7 @@ from application.record import Record
 
 class Uploader:
 
-	def __init__(self, host, port, ca_cert, device_key, device_cert):
+	def __init__(self, device, host, port, ca_cert, device_key, device_cert):
 		Log.info('configuring uploader with host={} port={} ca_cert={} device_key={} device_cert={}'.format(host, port, ca_cert, device_key, device_cert))
 		# load the certificates and key
 		with open(ca_cert) as certAuthCertFile:
@@ -28,6 +28,8 @@ class Uploader:
 		self.endpoint = endpoints.SSL4ClientEndpoint(reactor, host, port, options)
 		# create the factory
 		self.factory = MQTTFactory(profile=MQTTFactory.PUBLISHER)
+		# store the device name
+		self.device = device
 		# initialize the client to None to indicate we're not connected yet
 		self.client = None
 	
@@ -52,7 +54,7 @@ class Uploader:
 			self.client = yield self.endpoint.connect(self.factory)
 			Log.info("connected")
 			# do the MQTT connect
-			yield self.client.connect("device", keepalive=0, version=v31)
+			yield self.client.connect(self.device, keepalive=0, version=v31)
 			Log.info("registered")
 			# trigger an upload
 			self.upload()
@@ -71,7 +73,7 @@ class Uploader:
 			return
 
 		# get all pending database entries
-		records = yield Record.find()
+		records = yield Record.find(orderby='timestamp DESC')
 		# check for cases where no records are found
 		if 0 == len(records):
 			Log.info("no records found, not sending")
@@ -83,23 +85,25 @@ class Uploader:
 				# iterate through all records
 				for record in records:
 					# setup the list of circuits
-					circuits = []
+					circuits = {}
 					# query the measurements for this record
 					measurements = yield record.measurements.get()
 					# go through all of the measurements and add them to the JSON payload
 					for measurement in measurements:
 						# create the circuit
-						circuit = {'circuit' : measurement.circuit, 'amperage-in-a' : measurement.amperage, 'voltage-in-v' : measurement.voltage}
-						# add it to the list
-					circuits.append(circuit)
+						circuit = {'amperage-in-a' : measurement.amperage, 'voltage-in-v' : measurement.voltage}
+						circuits[measurement.circuit] = circuit
 
 					# create the top-level record entry
 					entry = {'timestamp' : record.timestamp, 'uuid' : record.uuid, 'duration-in-s' : record.duration, 'measurements' : circuits}		
 
+					# HACK HACK - temporarily populate the device name
+					entry['device'] = self.device
+
 					# serialize to JSON
 					serialized = dumps(entry)
 
-					Log.info('sending record with UUID={}'.format(record.uuid))
+					Log.info('sending record with UUID={} timestamp={}'.format(record.uuid, record.timestamp))
 					yield self.client.publish(topic="topic/records", qos=1, message=serialized)
 					Log.info("successfully sent record, deleting")
 					yield record.delete()

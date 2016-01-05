@@ -5,4 +5,4 @@ DATABASE=/var/local/db/samples.db
 PYTHONPATH=~/src/AutobahnPython/autobahn:debug
 export PYTHONPATH
 
-pdb application.py --host $MQTT_HOST --port $MQTT_PORT --ca-cert $CERT_DIR/rootCA.pem.crt --device-cert $CERT_DIR/dd38b4c1a4-certificate.pem.crt --device-key $CERT_DIR/dd38b4c1a4-private.pem.key  --database $DATABASE 
+pdb application.py --device ABCD1234 --host $MQTT_HOST --port $MQTT_PORT --ca-cert $CERT_DIR/rootCA.pem.crt --device-cert $CERT_DIR/dd38b4c1a4-certificate.pem.crt --device-key $CERT_DIR/dd38b4c1a4-private.pem.key  --database $DATABASE 
