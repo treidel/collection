@@ -5,57 +5,17 @@ from twisted.internet import reactor
 from twisted.internet import ssl
 from twisted.internet import defer
 from twisted.internet import task
+from twisted.internet import endpoints
 from twisted.internet.defer import inlineCallbacks
-from autobahn.twisted.websocket import connectWS
-from autobahn.twisted.websocket import StompWebSocketClientFactory
-from autobahn.twisted.websocket import StompWebSocketClientProtocol
-from autobahn.twisted.stomp import ClientSession
-from autobahn.twisted.stomp import ClientSessionFactory
-from urlparse import urlsplit
+from mqtt.client.factory import MQTTFactory
+from mqtt import v31
 from application.log import Log
 from application.record import Record
 
-class CustomStompWebSocketClientFactory(StompWebSocketClientFactory):
-
-	def startedConnecting(self, connector):
-		Log.info("started connecting to STOMP server")
-		self.uploader.session = None
-
-	def clientConnectionFailed(self, connector, reason):
-		Log.info("failed to connect to STOMP server, reason=" + str(reason))
-		# trigger a reconnect later
-		task.deferLater(reactor, 10.0, self.uploader._connect)		
-
-	def clientConnectionLost(self, connector, reason):
-		Log.info("connection to STOMP server lost, reason=" + str(reason))
-		# clear ourselves in the uploader
-		self.uploader.session = None
-		# trigger a reconnect
-		task.deferLater(reactor, 10.0, self.uploader._connect)	
-
-class CustomClientSession(ClientSession):
-
-	def onConnect(self):
-		Log.info("connected to STOMP server")
-		ClientSession.onConnect(self)
-
-	def onAttach(self):
-		Log.info("attached to STOMP server")
-		# setup the registration message
-		registration = {'model' : 'test', 'software-version' : '1.0', 'hardware-version' : '1.0'}
-		payload = dumps(registration)
-		self.send('/registration', payload, False)
-		# store ourselves in the uploader now that we're fully connected
-		self.factory.uploader.session = self
-		# start an upload in case there are stored records
-		self._as_future(self.factory.uploader._upload)
-		
-	def onDetach(self):
-		Log.info("detached from STOMP server")
-		
 class Uploader:
 
-	def __init__(self, url, ca_cert, device_key, device_cert):
+	def __init__(self, host, port, ca_cert, device_key, device_cert):
+		Log.info('configuring uploader with host={} port={} ca_cert={} device_key={} device_cert={}'.format(host, port, ca_cert, device_key, device_cert))
 		# load the certificates and key
 		with open(ca_cert) as certAuthCertFile:
 			certAuthCert = ssl.Certificate.loadPEM(certAuthCertFile.read())
@@ -63,47 +23,55 @@ class Uploader:
 			with open(device_cert) as certFile:
 				deviceCert = ssl.PrivateCertificate.loadPEM(keyFile.read() + certFile.read())
 		# create the SSL context factory
-		self.sslContextFactory = deviceCert.options(certAuthCert)
-		# parse the url
-		r = urlsplit(url)
-		# create the session factory
-		session_factory = ClientSessionFactory(r.hostname)
-		session_factory.session = CustomClientSession
-		session_factory.uploader = self
-		# create the connection factory
-		self.factory = CustomStompWebSocketClientFactory(session_factory, url=url, debug=True)
-		# store a reference to ourselves in the factory
-		self.factory.uploader = self
-		# initialize the session to None to indicate we're not connected yet
-		self.session = None
+		options = deviceCert.options(certAuthCert)
+		# create the endpoint 
+		self.endpoint = endpoints.SSL4ClientEndpoint(reactor, host, port, options)
+		# create the factory
+		self.factory = MQTTFactory(profile=MQTTFactory.PUBLISHER)
+		# initialize the client to None to indicate we're not connected yet
+		self.client = None
 	
 	def start(self):
-		Log.info("starting uploading")
+		Log.info("starting")
 		# try to connect
 		task.deferLater(reactor, 0.0, self._connect)
 		# we're supposed to return a deferred
 		return defer.succeed(None)
 
-	def upload(self):
+	def upload(self):	
+		Log.info("uploading")
 		# trigger an upload in a short while
 		task.deferLater(reactor, 0.0, self._upload)
 
+	@inlineCallbacks
 	def _connect(self):
-		Log.info("triggering connection")
-		# start the connection
-		connectWS(self.factory, self.sslContextFactory)
+		Log.info("connecting")
+		# initialize the client variable so we can clean up in error cases
+		try:
+			# start the connection
+			self.client = yield self.endpoint.connect(self.factory)
+			Log.info("connected")
+			# do the MQTT connect
+			yield self.client.connect("device", keepalive=0, version=v31)
+			Log.info("registered")
+			# trigger an upload
+			self.upload()
+		except Exception, e:
+			Log.info('failed to connect, waiting to retry.  Reason={}'.format(e))
+			self.client = None
+			task.deferLater(reactor, 10.0, self._connect)
 
 	@inlineCallbacks 
 	def _upload(self):
 		Log.info("starting upload")
 
 		# if we don't have a connection give up
-		if self.session is None:
+		if self.client is None:
 			Log.info("no connection, not sending")
 			return
 
 		# get all pending database entries
-		records = yield Record.find(limit=16)
+		records = yield Record.find()
 		# check for cases where no records are found
 		if 0 == len(records):
 			Log.info("no records found, not sending")
@@ -111,45 +79,38 @@ class Uploader:
 			# go through all records to create the REST payload
 			Log.info("found " + str(len(records)) + " records")
 
-			# setup the list of entries
-			entries = []
-		
-			# iterate through all records
-			for record in records:
-				# setup the list of circuits
-				circuits = []
-				# query the measurements for this record
-				measurements = yield record.measurements.get()
-				# go through all of the measurements and add them to the JSON payload
-				for measurement in measurements:
-					# create the circuit
-					circuit = {'circuit' : measurement.circuit, 'amperage-in-a' : measurement.amperage, 'voltage-in-v' : measurement.voltage}
-					# add it to the list
+			try:
+				# iterate through all records
+				for record in records:
+					# setup the list of circuits
+					circuits = []
+					# query the measurements for this record
+					measurements = yield record.measurements.get()
+					# go through all of the measurements and add them to the JSON payload
+					for measurement in measurements:
+						# create the circuit
+						circuit = {'circuit' : measurement.circuit, 'amperage-in-a' : measurement.amperage, 'voltage-in-v' : measurement.voltage}
+						# add it to the list
 					circuits.append(circuit)
 
-				# create the top-level record entry
-				entry = {'timestamp' : record.timestamp, 'uuid' : record.uuid, 'duration-in-s' : record.duration, 'measurements' : circuits}		
-				# add the entry to the list
-				entries.append(entry)
+					# create the top-level record entry
+					entry = {'timestamp' : record.timestamp, 'uuid' : record.uuid, 'duration-in-s' : record.duration, 'measurements' : circuits}		
 
-			# serialize to JSON
-			serialized = dumps(entries)
+					# serialize to JSON
+					serialized = dumps(entry)
 
-			try:
-				Log.info("sending records")
-				yield self.session.send('/records', serialized, True)
-				Log.info("successfully sent " + str(len(records)))
-
-				# delete the records we sent
-				for record in records:
+					Log.info('sending record with UUID={}'.format(record.uuid))
+					yield self.client.publish(topic="topic/records", qos=1, message=serialized)
+					Log.info("successfully sent record, deleting")
 					yield record.delete()
-				# trigger another upload in case where are still records to collect
+				
+				Log.info("sent " + str(len(records)) + " records")	
+				# trigger another upload in case there are still records to collect
 				self.upload()
 
 			except Exception as e:
             			Log.error("error received when sending records: " + str(e))
 			
-
 	def _success(records):
 		Log.info("success")
 
@@ -169,17 +130,19 @@ if __name__ == '__main__':
 
 	parser = OptionParser()
 	parser.add_option("--database", dest="database", help="database location")
-	parser.add_option("--url", dest="url", help="The WebSocket URL")
+	parser.add_option("--host", dest="host", help="MQTT server")
+	parser.add_option("--port", dest="port", help="MQTT port")
 	parser.add_option("--ca-cert", dest="cacert", help="CA certificate")
  	parser.add_option("--device-key", dest="devicekey", help="device key")
 	parser.add_option("--device-cert", dest="devicecert", help="device cert")
 	(options, args) = parser.parse_args()
 
-	if options.database is None or options.url is None or options.cacert is None or options.devicekey is None or options.devicecert is None:
+	if options.database is None or options.host is None or options.port is None or options.cacert is None or options.devicekey is None or options.devicecert is None:
 		raise Exception("missing argument")
 
 	Database.setup(options.database)
-	
-	uploader = Uploader2(options.url, options.cacert, options.devicekey, options.devicecert)
+
+	uploader = Uploader(options.host, int(options.port), options.cacert, options.devicekey, options.devicecert)
+	uploader.start()
 
 	reactor.run()
