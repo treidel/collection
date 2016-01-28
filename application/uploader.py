@@ -117,13 +117,11 @@ class Uploader:
 				Log.info("sent " + str(len(records)) + " records")	
 			except Exception as e:
             			Log.error("error received when sending records: " + str(e))
+				# force a disconnect + reconnect 
+				self.client.disconnect()
+                        	self.client = None
+                        	task.deferLater(reactor, 10.0, self._connect)
 			
-	def _success(records):
-		Log.info("success")
-
-	def _failure():
-		Log.info("failure")
-
 if __name__ == '__main__':
 
 	import sys
