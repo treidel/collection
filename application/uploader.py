@@ -12,6 +12,33 @@ from mqtt import v31
 from application.log import Log
 from application.record import Record
 
+class CustomMQTTFactory(MQTTFactory):
+	def __init__(self, uploader):
+		MQTTFactory.__init__(self, profile=MQTTFactory.PUBLISHER)
+		self.uploader = uploader
+
+	def clientConnectionFailed(self, connector, reason):
+		Log.info("connection failed reason={}".format(reason))
+		MQTTFactory.clientConnectionFailed(self, connector, reason)	
+	
+	def clientConnectionLost(self, connector, reason):
+		Log.info("connection lost reason={}".format(reason))
+		# clear the protocol
+		self.uploader.protocol = None
+		# let the base class do the rest
+		MQTTFactory.clientConnectionLost(self, connector, reason)
+
+	def buildProtocol(self, addr):
+		Log.info("connected to addr={}".format(addr))
+		# reset the delay next time we re-connect
+		self.resetDelay()
+		# create the protocol
+		protocol = MQTTFactory.buildProtocol(self, addr)
+		# do the connection handling real soon
+		task.deferLater(reactor, 0.0, self.uploader._connected, protocol)
+		# hand back the protocl
+		return protocol
+
 class Uploader:
 
 	def __init__(self, device, host, port, ca_cert, device_key, device_cert):
@@ -27,11 +54,11 @@ class Uploader:
 		# create the endpoint 
 		self.endpoint = endpoints.SSL4ClientEndpoint(reactor, host, port, options)
 		# create the factory
-		self.factory = MQTTFactory(profile=MQTTFactory.PUBLISHER)
+		self.factory = CustomMQTTFactory(self)
+		# initialize the protocol to none
+		self.protocol = None
 		# store the device name
 		self.device = device
-		# initialize the client to None to indicate we're not connected yet
-		self.client = None
 	
 	def start(self):
 		Log.info("starting")
@@ -45,36 +72,28 @@ class Uploader:
 		# trigger an upload in a short while
 		task.deferLater(reactor, 0.0, self._upload)
 
-	@inlineCallbacks
 	def _connect(self):
 		Log.info("connecting")
-		# initialize the client variable so we can clean up in error cases
-		client = None
-		try:
-			# start the connection
-			client = yield self.endpoint.connect(self.factory)
-			Log.info("connected")
-			# do the MQTT connect
-			yield client.connect(self.device, keepalive=0, version=v31)
-			Log.info("registered")
-			# store the client
-			self.client = client
-			# trigger an upload
-			self.upload()
-		except Exception, e:
-			Log.info('failed to connect, waiting to retry.  Reason={}'.format(e))
-			if client is not None:
-				Log.info("disconnecting")
-				client.transport.loseConnection()
-			self.client = None
-			task.deferLater(reactor, 10.0, self._connect)
+		# start the connection
+		self.endpoint.connect(self.factory)
+
+	@inlineCallbacks
+	def _connected(self, protocol):
+		Log.info("registering")
+                # start the MQTT connection sequence
+                yield protocol.connect(self.device, keepalive=0, version=v31)
+		Log.info("registered")
+		# store the protocol
+		self.protocol = protocol
+		# trigger an upload
+		self.upload()
 
 	@inlineCallbacks 
 	def _upload(self):
 		Log.info("starting upload")
 
 		# if we don't have a connection give up
-		if self.client is None:
+		if self.protocol is None:
 			Log.info("no connection, not sending")
 			return
 
@@ -110,17 +129,15 @@ class Uploader:
 					serialized = dumps(entry)
 
 					Log.info('sending record with UUID={} timestamp={}'.format(record.uuid, record.timestamp))
-					yield self.client.publish(topic="topic/records", qos=1, message=serialized)
+					yield self.protocol.publish(topic="topic/records", qos=1, message=serialized)
 					Log.info("successfully sent record, deleting")
 					yield record.delete()
 				
 				Log.info("sent " + str(len(records)) + " records")	
 			except Exception as e:
             			Log.error("error received when sending records: " + str(e))
-				# force a disconnect + reconnect 
-				self.client.disconnect()
-                        	self.client = None
-                        	task.deferLater(reactor, 10.0, self._connect)
+				# force a disconnect 
+				self.protcol.transport.loseConnection()
 			
 if __name__ == '__main__':
 
