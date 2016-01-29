@@ -135,9 +135,9 @@ class Uploader:
 				
 				Log.info("sent " + str(len(records)) + " records")	
 			except Exception as e:
-            			Log.error("error received when sending records: " + str(e))
+            			Log.error("error received when sending records: {}".format(e))
 				# force a disconnect 
-				self.protcol.transport.loseConnection()
+				self.protocol.transport.loseConnection()
 			
 if __name__ == '__main__':
 
