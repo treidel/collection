@@ -17,23 +17,14 @@ class CustomMQTTFactory(MQTTFactory):
 		MQTTFactory.__init__(self, profile=MQTTFactory.PUBLISHER)
 		self.uploader = uploader
 
-	def clientConnectionFailed(self, connector, reason):
-		Log.info("connection failed reason={}".format(reason))
-		MQTTFactory.clientConnectionFailed(self, connector, reason)	
-	
-	def clientConnectionLost(self, connector, reason):
-		Log.info("connection lost reason={}".format(reason))
-		# clear the protocol
-		self.uploader.protocol = None
-		# let the base class do the rest
-		MQTTFactory.clientConnectionLost(self, connector, reason)
-
 	def buildProtocol(self, addr):
 		Log.info("connected to addr={}".format(addr))
 		# reset the delay next time we re-connect
 		self.resetDelay()
 		# create the protocol
 		protocol = MQTTFactory.buildProtocol(self, addr)
+		# register the disconnection handler
+		protocol.setDisconnectCallback(self.uploader._disconnected)
 		# do the connection handling real soon
 		task.deferLater(reactor, 0.0, self.uploader._connected, protocol)
 		# hand back the protocl
@@ -76,6 +67,22 @@ class Uploader:
 		Log.info("connecting")
 		# start the connection
 		self.endpoint.connect(self.factory)
+
+	def _disconnect(self):
+		Log.info("disconnecting")
+		# force-close the transport (if it exists)
+                if self.protocol is not None:
+                        self.protocol.transport.loseConnection()
+                # protocol no longer valid
+                self.protocol = None
+                # retry in a little while
+                Log.info("retrying connection in 10.0 seconds")
+                task.deferLater(reactor, 10.0, self._connect)
+
+	def _disconnected(self, reason):
+		Log.info("disconnected reason={}".format(reason))
+		# disconnect
+		self._disconnect()
 
 	@inlineCallbacks
 	def _connected(self, protocol):
@@ -136,8 +143,6 @@ class Uploader:
 				Log.info("sent " + str(len(records)) + " records")	
 			except Exception as e:
             			Log.error("error received when sending records: {}".format(e))
-				# force a disconnect 
-				self.protocol.transport.loseConnection()
 			
 if __name__ == '__main__':
 
