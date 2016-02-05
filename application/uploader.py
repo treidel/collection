@@ -8,25 +8,50 @@ from twisted.internet import task
 from twisted.internet import endpoints
 from twisted.internet.defer import inlineCallbacks
 from mqtt.client.factory import MQTTFactory
+from mqtt.client.publisher import MQTTProtocol
 from mqtt import v31
 from application.log import Log
 from application.record import Record
 
+class CustomMQTTProtocol(MQTTProtocol):
+	def __init__(self, factory):
+		MQTTProtocol.__init__(self, factory)
+		self.uploader = factory.uploader
+
+	def connectionMade(self):
+		Log.info("registering")
+                # start the MQTT connection sequence
+                d = self.connect(self.uploader.device, keepalive=0, version=v31)
+		d.addCallback(self.uploader._connected, self)
+		d.addErrback(self._failed)
+
+	def connectionLost(self, reason):
+		Log.info("lost reason={}".format(reason))
+		# clear the uploader
+		self.uploader.protocol = None
+                # retry in a little while
+                Log.info("retrying connection in 10.0 seconds")
+                task.deferLater(reactor, 10.0, self.uploader._connect)
+		
+	def _failed(self, reason):
+		Log.info("failed reason={}".format(reason))
+		# disconnect from the remote
+		self.transport.loseConnection()
+		# retry in a little while
+                Log.info("retrying connection in 10.0 seconds")
+                task.deferLater(reactor, 10.0, self.uploader._connect)
+	
 class CustomMQTTFactory(MQTTFactory):
 	def __init__(self, uploader):
 		MQTTFactory.__init__(self, profile=MQTTFactory.PUBLISHER)
 		self.uploader = uploader
-
+	
 	def buildProtocol(self, addr):
 		Log.info("connected to addr={}".format(addr))
-		# reset the delay next time we re-connect
-		self.resetDelay()
 		# create the protocol
-		protocol = MQTTFactory.buildProtocol(self, addr)
+		protocol = CustomMQTTProtocol(self)
 		# register the disconnection handler
 		protocol.setDisconnectCallback(self.uploader._disconnected)
-		# do the connection handling real soon
-		task.deferLater(reactor, 0.0, self.uploader._connected, protocol)
 		# hand back the protocl
 		return protocol
 
@@ -84,12 +109,8 @@ class Uploader:
 		# disconnect
 		self._disconnect()
 
-	@inlineCallbacks
-	def _connected(self, protocol):
-		Log.info("registering")
-                # start the MQTT connection sequence
-                yield protocol.connect(self.device, keepalive=0, version=v31)
-		Log.info("registered")
+	def _connected(self, session, protocol):
+		Log.info("registered session={} protocol={}".format(session, protocol))
 		# store the protocol
 		self.protocol = protocol
 		# trigger an upload
@@ -105,14 +126,15 @@ class Uploader:
 			return
 
 		# get all pending database entries
-		records = yield Record.find(orderby='timestamp DESC')
+		records = yield Record.find(orderby='timestamp DESC', limit=10)
 		# check for cases where no records are found
 		if 0 == len(records):
 			Log.info("no records found, not sending")
 		else:	
 			# go through all records to create the REST payload
 			Log.info("found " + str(len(records)) + " records")
-
+			# count the number of records we actually sent 
+			counter = 0
 			try:
 				# iterate through all records
 				for record in records:
@@ -136,13 +158,21 @@ class Uploader:
 					serialized = dumps(entry)
 
 					Log.info('sending record with UUID={} timestamp={}'.format(record.uuid, record.timestamp))
-					yield self.protocol.publish(topic="topic/records", qos=1, message=serialized)
-					Log.info("successfully sent record, deleting")
-					yield record.delete()
+					# make sure we still have a connection
+					if self.protocol is not None:
+						yield self.protocol.publish(topic="topic/records", qos=1, message=serialized)
+						Log.info("successfully sent record, deleting UUID={}".format(record.uuid))
+						yield record.delete()
+						counter += 1
+					else:
+						Log.info("lost connection, stopping upload")
+						break
 				
-				Log.info("sent " + str(len(records)) + " records")	
+				Log.info("sent {} records".format(counter))
 			except Exception as e:
             			Log.error("error received when sending records: {}".format(e))
+				# on any error force a disconnect
+				self._disconnect()
 			
 if __name__ == '__main__':
 
