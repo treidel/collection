@@ -23,7 +23,7 @@ class CustomMQTTProtocol(MQTTProtocol):
                 # start the MQTT connection sequence
                 d = self.connect(self.uploader.device, keepalive=0, version=v31)
 		d.addCallback(self.uploader._connected, self)
-		d.addErrback(self._failed)
+		d.addErrback(self.uploader._failed)
 
 	def connectionLost(self, reason):
 		Log.info("lost reason={}".format(reason))
@@ -33,14 +33,6 @@ class CustomMQTTProtocol(MQTTProtocol):
                 Log.info("retrying connection in 10.0 seconds")
                 task.deferLater(reactor, 10.0, self.uploader._connect)
 		
-	def _failed(self, reason):
-		Log.info("failed reason={}".format(reason))
-		# disconnect from the remote
-		self.transport.loseConnection()
-		# retry in a little while
-                Log.info("retrying connection in 10.0 seconds")
-                task.deferLater(reactor, 10.0, self.uploader._connect)
-	
 class CustomMQTTFactory(MQTTFactory):
 	def __init__(self, uploader):
 		MQTTFactory.__init__(self, profile=MQTTFactory.PUBLISHER)
@@ -75,6 +67,8 @@ class Uploader:
 		self.protocol = None
 		# store the device name
 		self.device = device
+		# store if an upload is in progress
+		self.uploading = False 
 	
 	def start(self):
 		Log.info("starting")
@@ -91,12 +85,16 @@ class Uploader:
 	def _connect(self):
 		Log.info("connecting")
 		# start the connection
-		self.endpoint.connect(self.factory)
+		d = self.endpoint.connect(self.factory)
+		d.addErrback(self._failed)
 
 	def _disconnect(self):
 		Log.info("disconnecting")
 		# force-close the transport (if it exists)
                 if self.protocol is not None:
+			# send a disconnect message		
+			self.protocol.disconnect()
+			# disconnect the transport 
                         self.protocol.transport.loseConnection()
                 # protocol no longer valid
                 self.protocol = None
@@ -106,8 +104,13 @@ class Uploader:
 
 	def _disconnected(self, reason):
 		Log.info("disconnected reason={}".format(reason))
-		# disconnect
-		self._disconnect()
+		# disconnect transport
+		self.protocol.transport.loseConnection()
+		# protocol no longer valid
+		self.protocol = None
+		# retry in a little while
+		Log.info("retrying connection in 10.0 seconds")
+		task.deferLater(reactor, 10.0, self._connect)
 
 	def _connected(self, session, protocol):
 		Log.info("registered session={} protocol={}".format(session, protocol))
@@ -116,63 +119,79 @@ class Uploader:
 		# trigger an upload
 		self.upload()
 
+        def _failed(self, reason):
+                Log.info("failed reason={}".format(reason))
+		# if the protocol is open close the transport
+		if self.protocol is not None:
+			self.protocol.transport.loseConnection()		
+                # retry in a little while
+                Log.info("retrying connection in 10.0 seconds")
+                task.deferLater(reactor, 10.0, self._connect)
+
+
 	@inlineCallbacks 
 	def _upload(self):
 		Log.info("starting upload")
+		# if there's already an upload in progress bail
+		if self.uploading is True:
+			Log.info("already uploading, not sending")
+			return
 
 		# if we don't have a connection give up
 		if self.protocol is None:
 			Log.info("no connection, not sending")
 			return
 
-		# get all pending database entries
-		records = yield Record.find(orderby='timestamp DESC', limit=10)
+		# mark that we are uploading
+		self.uploading = True
+
+		# get the most recent record 
+		record = yield Record.find(orderby='timestamp DESC', limit=1)
 		# check for cases where no records are found
-		if 0 == len(records):
+		if record is None:
 			Log.info("no records found, not sending")
-		else:	
-			# go through all records to create the REST payload
-			Log.info("found " + str(len(records)) + " records")
-			# count the number of records we actually sent 
-			counter = 0
-			try:
-				# iterate through all records
-				for record in records:
-					# setup the list of circuits
-					circuits = {}
-					# query the measurements for this record
-					measurements = yield record.measurements.get()
-					# go through all of the measurements and add them to the JSON payload
-					for measurement in measurements:
-						# create the circuit
-						circuit = {'amperage-in-a' : measurement.amperage, 'voltage-in-v' : measurement.voltage}
-						circuits[measurement.circuit] = circuit
+			self.uploading = False
+			return
+		
+		# go through all records to create the payload
+		try:
+			# setup the list of circuits
+			circuits = {}
+			# query the measurements for this record
+			measurements = yield record.measurements.get()
+			# go through all of the measurements and add them to the JSON payload
+			for measurement in measurements:
+				# create the circuit
+				circuit = {'amperage-in-a' : measurement.amperage, 'voltage-in-v' : measurement.voltage}
+				circuits[measurement.circuit] = circuit
 
-					# create the top-level record entry
-					entry = {'timestamp' : record.timestamp, 'uuid' : record.uuid, 'duration-in-s' : record.duration, 'measurements' : circuits}		
+			# create the top-level record entry
+			entry = {'timestamp' : record.timestamp, 'uuid' : record.uuid, 'duration-in-s' : record.duration, 'measurements' : circuits}		
 
-					# HACK HACK - temporarily populate the device name
-					entry['device'] = self.device
+			# HACK HACK - temporarily populate the device name
+			entry['device'] = self.device
 
-					# serialize to JSON
-					serialized = dumps(entry)
+			# serialize to JSON
+			serialized = dumps(entry)
 
-					Log.info('sending record with UUID={} timestamp={}'.format(record.uuid, record.timestamp))
-					# make sure we still have a connection
-					if self.protocol is not None:
-						yield self.protocol.publish(topic="topic/records", qos=1, message=serialized)
-						Log.info("successfully sent record, deleting UUID={}".format(record.uuid))
-						yield record.delete()
-						counter += 1
-					else:
-						Log.info("lost connection, stopping upload")
-						break
+			Log.info('found record with UUID={} timestamp={}'.format(record.uuid, record.timestamp))
+
+			# make sure we still have a connection
+			if self.protocol is not None:
+				yield self.protocol.publish(topic="topic/records", qos=1, message=serialized)
+				Log.info("successfully sent record, deleting UUID={}".format(record.uuid))
+				yield record.delete()
+			else:
+				Log.info("lost connection, did not upload")
 				
-				Log.info("sent {} records".format(counter))
-			except Exception as e:
-            			Log.error("error received when sending records: {}".format(e))
-				# on any error force a disconnect
-				self._disconnect()
+			# trigger another upload in case there's still records to be sent
+			self.upload()
+		except Exception as e:
+            		Log.error("error received when sending records: {}".format(e))
+			# on any error force a disconnect
+			self._disconnect()
+		# in all cases we're done uploading 
+		self.uploading = False
 			
 if __name__ == '__main__':
 
