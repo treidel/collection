@@ -32,6 +32,8 @@ class CustomMQTTProtocol(MQTTProtocol):
                 # retry in a little while
                 Log.info("retrying connection in 10.0 seconds")
                 task.deferLater(reactor, 10.0, self.uploader._connect)
+		# call the base class
+		MQTTProtocol.connectionLost(self, reason)
 		
 class CustomMQTTFactory(MQTTFactory):
 	def __init__(self, uploader):
